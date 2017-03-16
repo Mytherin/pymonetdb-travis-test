@@ -1024,3 +1024,6 @@ class DatabaseAPI20Test(unittest.TestCase):
         # the above line should execute without problems
         self.assertEqual(1, cur.rowcount,
                          'queries ending in comments should be executed correctly')
+
+if __name__ == "__main__":
+    unittest.main()

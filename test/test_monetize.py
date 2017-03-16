@@ -23,3 +23,6 @@ class TestMonetize(unittest.TestCase):
             pass
         x = Unknown()
         self.assertRaises(ProgrammingError, convert, x)
+
+if __name__ == "__main__":
+    unittest.main()

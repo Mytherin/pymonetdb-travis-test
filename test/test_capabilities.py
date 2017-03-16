@@ -396,3 +396,6 @@ class DatabaseTest(unittest.TestCase):
                             (table1, table2))
         result = self.cursor.fetchall()
         self.assertEqual(result, [(50, 50)])
+
+if __name__ == "__main__":
+    unittest.main()

@@ -46,3 +46,6 @@ class MultilineResponseTest(unittest.TestCase):
 
         # Make sure that cmd raises the correct exception
         self.assertRaises(pymonetdb.IntegrityError, c.cmd, [query_text])
+
+if __name__ == "__main__":
+    unittest.main()

@@ -47,3 +47,6 @@ class TestExceptions(unittest.TestCase):
         self.assertRaises(pymonetdb.exceptions.OperationalError,
                           cursor.execute,
                           u'select id from thistableshouldnotexist limit 1')
+
+if __name__ == "__main__":
+    unittest.main()

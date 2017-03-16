@@ -19,3 +19,7 @@ class TestPythonize(unittest.TestCase):
         result2 = pymonetdb.sql.pythonize.Binary(input2)
         self.assertEqual(output2, result2)
 
+
+if __name__ == "__main__":
+    unittest.main()
+    
