@@ -15,8 +15,25 @@ import hashlib
 import os
 from six import BytesIO, PY3
 
+try:
+    import snappy
+    HAVE_SNAPPY = True
+except ImportError:
+    HAVE_SNAPPY = False
+ 
 from pymonetdb.exceptions import OperationalError, DatabaseError,\
     ProgrammingError, NotSupportedError, IntegrityError
+
+from enum import Enum
+
+class Protocol(Enum):
+    prot9 = 1
+    prot10 = 2
+
+class Compression(Enum):
+    none = 1
+    snappy = 2
+    lz4 = 3
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +51,8 @@ MSG_QTRANS = "&4"
 MSG_QPREPARE = "&5"
 MSG_QBLOCK = "&6"
 MSG_HEADER = "%"
+MSG_NEW_RESULT_HEADER = "*"
+MSG_NEW_RESULT_CHUNK = "+"
 MSG_TUPLE = "["
 MSG_TUPLE_NOSLICE = "="
 MSG_REDIRECT = "^"
@@ -89,7 +108,6 @@ class Connection(object):
     """
     MAPI (low level MonetDB API) connection
     """
-
     def __init__(self):
         self.state = STATE_INIT
         self._result = None
@@ -100,6 +118,9 @@ class Connection(object):
         self.password = ""
         self.database = ""
         self.language = ""
+        self.protocol = Protocol.prot9
+        self.compression = Compression.none
+        self.blocksize = -1
 
     def connect(self, database, username, password, language, hostname=None,
                 port=None, unix_socket=None):
@@ -148,8 +169,11 @@ class Connection(object):
         everything is okay """
 
         challenge = self._getblock()
-        response = self._challenge_response(challenge)
+        self.blocksize = 1000000
+        (response, protocol, compression) = self._challenge_response(challenge, self.blocksize)
         self._putblock(response)
+        self.protocol = protocol
+        self.compression = compression
         prompt = self._getblock().strip()
 
         if len(prompt) == 0:
@@ -228,7 +252,7 @@ class Connection(object):
                 exception, string = handle_error(lines[index][1:])
                 raise exception(string)
 
-        if response[0] in [MSG_Q, MSG_HEADER, MSG_TUPLE]:
+        if response[0] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK]:
             return response
         elif response[0] == MSG_ERROR:
             exception, string = handle_error(response[1:])
@@ -243,7 +267,7 @@ class Connection(object):
         else:
             raise ProgrammingError("unknown state: %s" % response)
 
-    def _challenge_response(self, challenge):
+    def _challenge_response(self, challenge, blocksize):
         """ generate a response to a mapi login challenge """
         challenges = challenge.split(':')
         salt, identity, protocol, hashes, endian = challenges[:5]
@@ -275,8 +299,19 @@ class Connection(object):
             raise NotSupportedError("Unsupported hash algorithms required"
                                     " for login: %s" % hashes)
 
-        return ":".join(["BIG", self.username, pwhash, self.language,
-                         self.database]) + ":"
+        protocol = Protocol.prot9
+        compression = Compression.none
+        response = ["BIG", self.username, pwhash, self.language, self.database]
+        if "PROT10" in h:
+            # protocol 10 is supported
+            protocol = Protocol.prot10
+            _compression = "COMPRESSION_NONE"
+            # fixme: no compression on localhost
+            if "COMPRESSION_SNAPPY" in h and HAVE_SNAPPY:
+                _compression = "COMPRESSION_SNAPPY"
+                compression = Compression.snappy
+            response = ["LIT", self.username, pwhash, self.language, self.database, "PROT10", _compression, str(blocksize)]
+        return (":".join(response) + ":", protocol, compression)
 
     def _getblock(self):
         """ read one mapi encoded block """
@@ -289,11 +324,18 @@ class Connection(object):
         result = BytesIO()
         last = 0
         while not last:
-            flag = self._getbytes(2)
-            unpacked = struct.unpack('<H', flag)[0]  # little endian short
-            length = unpacked >> 1
-            last = unpacked & 1
-            result.write(self._getbytes(length))
+            if self.protocol == Protocol.prot9:
+                flag = self._getbytes(2)
+                unpacked = struct.unpack('<H', flag)[0]  # little endian short
+                length = unpacked >> 1
+                last = unpacked & 1
+            else:
+                flag = self._getbytes(8)
+                unpacked = struct.unpack('<q', flag)[0]  # little endian long long
+                length = unpacked >> 1
+                last = unpacked & 1
+            if length > 0:
+                result.write(self._getbytes(length))
         return decode(result.getvalue())
 
     def _getblock_socket(self):
@@ -334,7 +376,10 @@ class Connection(object):
             length = len(data)
             if length < MAX_PACKAGE_LENGTH:
                 last = 1
-            flag = struct.pack('<H', (length << 1) + last)
+            if self.protocol == Protocol.prot9:
+                flag = struct.pack('<H', (length << 1) + last)
+            else:
+                flag = struct.pack('<q', (length << 1) + last)
             self.socket.send(flag)
             self.socket.send(data)
             pos += length

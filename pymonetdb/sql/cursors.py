@@ -11,6 +11,24 @@ from pymonetdb.exceptions import ProgrammingError, InterfaceError
 from pymonetdb import mapi
 from six import u, PY2
 
+try:
+    raise ImportError("Help")
+    import numpy
+    HAVE_NUMPY = True
+except ImportError:
+    HAVE_NUMPY = False
+
+from enum import Enum
+
+class BinaryTypes(Enum):
+    int8 = 1
+    int16 = 2
+    int32 = 3
+    int64 = 4
+    int128 = 5
+    float32 = 6
+    float64 = 7
+
 logger = logging.getLogger("pymonetdb")
 
 
@@ -324,6 +342,7 @@ class Cursor(object):
         return self.next()
 
     def __store_result(self, block):
+        import struct
         """ parses the mapi result into a resultset"""
 
         if not block:
@@ -333,6 +352,269 @@ class Cursor(object):
         scale = display_size = internal_size = precision = 0
         null_ok = False
         type_ = []
+
+        if block.startswith(mapi.MSG_NEW_RESULT_HEADER): # *\n = new result set header
+            # isolate the header
+            header = block[2:]
+            # unpack the header
+            position = 0
+            (table_id, rows, columns, self.timezone) = struct.unpack("<iqqi", header[position:position + 24])
+            position += 24
+
+            column_name = [None] * columns
+            type_ = [None] * columns
+            typelen = [None] * columns
+            precision = [None] * columns
+            scale = [None] * columns
+            null_value = [None] * columns
+            for col in xrange(columns):
+                # skip max strlen, not necessary
+                position += 8
+                # read (tablename, columnname, typename) as null-terminated strings
+                text = []
+                for i in xrange(position, len(header)):
+                    if header[i] == '\0':
+                        text.append(header[position:i])
+                        position = i + 1
+                        if len(text) == 3:
+                            break
+                column_name[col] = text[1]
+                type_[col] = text[2]
+                (typelen[col], precision[col], scale[col], null_length) = struct.unpack("<iiii", header[position:position + 16])
+                position += 16
+                # read the null-value
+                # if null_length == 0 then the column has no NULL values
+                # thus we don't need to check
+                if null_length == 0:
+                    null_value[col] = None
+                else:
+                    null_value[col] = header[position:position + null_length]
+                    position += null_length
+
+            self.__query_id = 1 #FIXME, also transfer query id
+            self.rowcount = rows
+            self.__rows = []
+            self.description = list(zip(column_name, type_, typelen,
+                                        precision, scale, null_value))
+            self.__offset = 0
+            self.lastrowid = None
+            return
+        if block.startswith(mapi.MSG_NEW_RESULT_CHUNK): # +\n = new result set chunk
+            # chunk message, skip the +\n (first two characters)
+            # and read the row count of this message
+            if self.description == None:
+                self.__exception_handler(InterfaceError, "Unexpected result set chunk.")
+            (rows_in_chunk,) = struct.unpack("<q", block[2:10])
+            if rows_in_chunk < 0:
+                # if the row count is negative this is a buffer extension message
+                # we don't use a fixed size buffer so we can ignore it
+                return
+            # start reading the columns using the description we got from the header
+            position = 10
+            column_data = []
+            for column in self.description:
+                # the column data start position is always 8-byte aligned (for solaris)
+                # so we align 'position' to the next-highest multiple of 8
+                # (or leave it unchanged if it is already a multiple of 8)
+                position = position if position % 8 == 0 else position / 8 * 8 + 8
+                type_ = column[1]
+                typelen_ = column[2]
+                precision_ = float(column[3])
+                scale_ = float(column[4])
+                null_value = column[5]
+
+                def read_array_from_buffer(buffer, type_, rows_in_chunk, position, null_value):
+                    # this function reads a column of values of the specified BinaryType 
+                    # from a buffer, and converts it to a Python list
+                    # we try to use NUMPY for this because it is faster
+                    # but we also support a non-NumPy mode that uses struct.unpack
+                    # for people that do not have NUMPY installed
+                    if type_ == BinaryTypes.int128:
+                        # hugeint is a 128-bit integer
+                        # we read hugeints by reading two 64-bit integers
+                        # and then multiplying the right-most integer by LONG_MAX (2^64)
+                        import math
+                        intermediate_arr = read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk * 2, position, None)
+                        arr = []
+                        LONG_MAX = math.pow(2, 64)
+                        hge_nil = None
+                        if null_value != None:
+                            nil_arr = read_array_from_buffer(null_value, BinaryTypes.int64, 2, 0, None)
+                            hge_nil = nil_arr[0] + nil_arr[1] * LONG_MAX
+                        for i in xrange(rows_in_chunk):
+                            hge_val = intermediate_arr[i * 2] + intermediate_arr[i * 2 + 1] * LONG_MAX
+                            arr.append(hge_val if hge_val != hge_nil else None)
+                        return arr
+                    elif HAVE_NUMPY:
+                        numpy_type_ = None
+                        if type_ == BinaryTypes.int8: 
+                            numpy_type_ = numpy.int8
+                        elif type_ == BinaryTypes.int16:
+                            numpy_type_ = numpy.int16
+                        elif type_ == BinaryTypes.int32:
+                            numpy_type_ = numpy.int32
+                        elif type_ == BinaryTypes.int64:
+                            numpy_type_ = numpy.int64
+                        elif type_ == BinaryTypes.float32:
+                            numpy_type_ = numpy.float32
+                        elif type_ == BinaryTypes.float64:
+                            numpy_type_ = numpy.float64
+                        else:
+                            self.__exception_handler(InterfaceError, "Unexpected type, expected a BinaryTypes enum value")
+                        arr = numpy.frombuffer(buffer, type_, rows_in_chunk, position).tolist()
+                        if null_value != None:
+                            null_value = numpy.frombuffer(null_value, type_, 1, 0)
+                            arr = [None if x == null_value else x for x in arr]
+                        return arr
+                    else:
+                        bytes_per_value = 0
+                        if type_ == BinaryTypes.int8:
+                            type_fmt = "b"
+                            bytes_per_value = 1
+                        elif type_ == BinaryTypes.int16:
+                            type_fmt = "h"
+                            bytes_per_value = 2
+                        elif type_ == BinaryTypes.int32:
+                            type_fmt = "i"
+                            bytes_per_value = 4
+                        elif type_ == BinaryTypes.int64:
+                            type_fmt = "q"
+                            bytes_per_value = 8
+                        elif type_ == BinaryTypes.float32:
+                            type_fmt = "f"
+                            bytes_per_value = 4
+                        elif type_ == BinaryTypes.float64:
+                            type_fmt = "d"
+                            bytes_per_value = 8
+                        else:
+                            self.__exception_handler(InterfaceError, "Unexpected type, expected a BinaryTypes enum value")
+                        fmtstr = "<%d%s" % (rows_in_chunk, type_fmt)
+                        arr = struct.unpack(fmtstr, buffer[position:position + bytes_per_value * rows_in_chunk])
+                        if null_value != None:
+                            (null_value,) = struct.unpack("<%s" % type_fmt, null_value)
+                            arr = [None if x == null_value else x for x in arr]
+                        return arr
+
+                if type_ == "blob":
+                    # blobs start with the total length of the column as lng
+                    (total_length,) = struct.unpack("<q", block[position:position + 8])
+                    position += 8
+                    expected_end = position + total_length
+                    arr = []
+                    for i in xrange(rows_in_chunk):
+                        # each blob starts with a lng indicating the length of the blob
+                        # followed by the actual data
+                        (blob_length,) = struct.unpack("<q", block[position:position + 8])
+                        position += 8
+                        if blob_length < 0:
+                            # blob length < 0 means NULL value
+                            arr.append(None)
+                        else:
+                            # actual value, parse to byte array
+                            arr.append(bytearray(block[position:position + blob_length]))
+                            position += blob_length
+                    if position != expected_end:
+                        self.__exception_handler(InterfaceError, "Expected end position does not match up with actual end position")
+                    column_data.append(arr)
+                elif type_ == "tinyint":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.int8, rows_in_chunk, position, null_value))
+                elif type_ == "smallint":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.int16, rows_in_chunk, position, null_value))
+                elif type_ == "int":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.int32, rows_in_chunk, position, null_value))
+                elif type_ == "boolean":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.bool, rows_in_chunk, position, null_value))
+                elif type_ == "double":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.float64, rows_in_chunk, position, null_value))
+                elif type_ == "bigint":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk, position, null_value))
+                elif type_ == "oid":
+                    if typelen_ == 8 or typelen_ == 4:
+                        column_data.append(read_array_from_buffer(block, BinaryTypes.int64 if typelen_ == 8 else BinaryTypes.int32, grows_in_chunk, position, null_value))
+                    else:
+                        self.__exception_handler(InterfaceError, "Unexpected OID length (%d), expected (4) or (8)." % typelen_)
+                elif type_ == "real":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.float32, rows_in_chunk, position, null_value))
+                elif type_ == "hugeint":
+                    column_data.append(read_array_from_buffer(block, BinaryTypes.int128, rows_in_chunk, position, null_value))
+                elif type_ == "decimal":
+                    import math
+                    # decimals are transferred as either (1), (2), (4), (8) or (16) byte integers
+                    # the type can be determined frmo the type length
+                    tpe = None
+                    if typelen_ == 1:
+                        tpe = BinaryTypes.int8
+                    elif typelen_ == 2:
+                        tpe = BinaryTypes.int16
+                    elif typelen_ == 4:
+                        tpe = BinaryTypes.int32
+                    elif typelen_ == 8:
+                        tpe = BinaryTypes.int64
+                    elif typelen_ == 16:
+                        tpe = BinaryTypes.int128
+                    else:
+                        self.__exception_handler(InterfaceError, "Unexpected decimal typelength %s." % typelen_)
+                    intermediate_arr = read_array_from_buffer(block, tpe, rows_in_chunk, position, null_value)
+                    # the divisor is 10^scale (i.e. scale is the position of the decimal point from the right)
+                    divider = float(math.pow(10, scale_))
+                    arr = [x / divider if x != None else x for x in intermediate_arr]
+                    column_data.append(arr)
+                elif type_ == "time" or type_ == "timetz":
+                    # time is transferred as 4-byte integers 
+                    # which indicate the amount of milliseconds since 00:00
+                    timezone = 0
+                    if type_ == "timetz":
+                        timezone = self.timezone
+                    import datetime
+                    intermediate_arr = read_array_from_buffer(block, BinaryTypes.int32, rows_in_chunk, position, null_value)
+                    # time does not support timedelta math, so we construct a datetime object and convert it back to time()
+                    arr = [(datetime.datetime(1, 1, 1, 0, 0, 0) + datetime.timedelta(microseconds=(x + timezone) * 1000)).time() if x != None else x for x in intermediate_arr]
+                    column_data.append(arr)
+                elif type_ == "timestamp" or type_ == "timestamptz":
+                    # timestamps are transferred as 8-byte unix timestamps
+                    import datetime
+                    timezone = 0
+                    if type_ == "timestamptz":
+                        timezone = self.timezone
+                    intermediate_arr = read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk, position, null_value)
+                    arr = [datetime.datetime.utcfromtimestamp((x + timezone) / 1000) if x != None else x for x in intermediate_arr]
+                    column_data.append(arr)
+                elif type_ == "varchar" or type_ == "clob" or typelen_ < 0:
+                    if typelen_ >= 0:
+                        # small strings might be send as fixed length strings
+                        # this means every string is transferred using a fixed length typelen_
+                        # shorter strings will be null-terminated, but still occupy typelen_ bytes in the message
+                        arr = []
+                        current_position = position
+                        for i in xrange(rows_in_chunk):
+                            arr.append(block[current_position:current_position + typelen_].split('\x00', 2)[0])
+                            current_position += typelen_
+                        column_data.append(arr)
+                    else:
+                        # null terminated strings
+                        # this column starts with a lng that indicates the length of the column
+                        (total_length,) = struct.unpack("<q", block[position:position + 8])
+                        position += 8
+                        # get the strings, and split them by null terminator
+                        arr = block[position:position + total_length].split('\x00')[:-1]
+                        if len(arr) != rows_in_chunk:
+                            self.__exception_handler(InterfaceError, "Expected more strings.")
+                        position += total_length
+                        if null_value != None:
+                            arr = [None if x == str(null_value)[0] else x for x in arr]
+                        if type_ == "date":
+                            # dates are transferred as strings because date math is not fun
+                            # we convert them to Python date objects here because that is what Python people expected
+                            import datetime
+                            arr = [datetime.datetime.strptime(x, "%Y-%m-%d").date() if x != None else x for x in arr]
+                        column_data.append(arr)
+                else:
+                    self.__exception_handler(InterfaceError, "Unsupported type %s." % type_)
+                if typelen_ > 0:
+                    position += rows_in_chunk * typelen_
+
+            self.__rows.extend(list(map(list, zip(*column_data))))
+            return
 
         for line in block.split("\n"):
             if line.startswith(mapi.MSG_INFO):
