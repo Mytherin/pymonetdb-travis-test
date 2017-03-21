@@ -78,6 +78,8 @@ class Cursor(object):
         # operation invoked via the .execute*() method yet.
         self.description = None
 
+        self.null_values = None
+
         # This read-only attribute indicates at which row
         # we currently are
         self.rownumber = -1
@@ -363,12 +365,16 @@ class Cursor(object):
             (table_id, rows, columns, self.timezone) = struct.unpack("<iqqi", header[position:position + 24])
             position += 24
 
+
             column_name = [None] * columns
             type_ = [None] * columns
-            typelen = [None] * columns
+            display_size = [None] * columns
+            internal_size = [None] * columns
             precision = [None] * columns
             scale = [None] * columns
+            null_ok = [None] * columns
             null_value = [None] * columns
+
             for col in xrange(columns):
                 # read (tablename, columnname, typename) as null-terminated strings
                 text = []
@@ -380,7 +386,7 @@ class Cursor(object):
                             break
                 column_name[col] = text[1]
                 type_[col] = text[2]
-                (typelen[col], precision[col], scale[col], null_length) = struct.unpack("<iiii", header[position:position + 16])
+                (internal_size[col], precision[col], scale[col], null_length) = struct.unpack("<iiii", header[position:position + 16])
                 position += 16
                 # read the null-value
                 # if null_length == 0 then the column has no NULL values
@@ -396,8 +402,12 @@ class Cursor(object):
             self.__query_id = 1 #FIXME, also transfer query id
             self.rowcount = int(rows)
             self.__rows = []
-            self.description = list(zip(column_name, type_, typelen,
-                                        precision, scale, null_value))
+
+            self.description = list(zip(column_name, type_, display_size,
+                                        internal_size, precision, scale,
+                                        null_ok))
+            self.null_values = null_value
+
             self.__offset = 0
             self.lastrowid = None
             # consume the explicit flush we perform after the header
@@ -416,16 +426,17 @@ class Cursor(object):
             # start reading the columns using the description we got from the header
             position = 10
             column_data = []
-            for column in self.description:
+            for c in xrange(len(self.description)):
+                column = self.description[c]
                 # the column data start position is always 8-byte aligned (for solaris)
                 # so we align 'position' to the next-highest multiple of 8
                 # (or leave it unchanged if it is already a multiple of 8)
                 position = position if position % 8 == 0 else position / 8 * 8 + 8
                 type_ = column[1]
-                typelen_ = column[2]
-                precision_ = float(column[3])
-                scale_ = float(column[4])
-                null_value = column[5]
+                typelen_ = column[3]
+                precision_ = float(column[4])
+                scale_ = float(column[5])
+                null_value = self.null_values[c]
 
                 def read_array_from_buffer(buffer, type_, rows_in_chunk, position, null_value):
                     # this function reads a column of values of the specified BinaryType 
