@@ -31,7 +31,6 @@ class BinaryTypes(Enum):
 
 logger = logging.getLogger("pymonetdb")
 
-
 class Cursor(object):
     """This object represents a database cursor, which is used to manage
     the context of a fetch operation. Cursors created from the same
@@ -180,7 +179,8 @@ class Cursor(object):
             query = operation
 
         block = self.connection.execute(query)
-        self.__store_result(block)
+        while self.__store_result(block) != None:
+            block = self.connection.mapi.read_response()
         self.rownumber = 0
         self.__executed = operation
         return self.rowcount
@@ -311,7 +311,9 @@ class Cursor(object):
 
         command = 'Xexport %s %s %s' % (self.__query_id, self.__offset, amount)
         block = self.connection.command(command)
-        self.__store_result(block)
+
+        while self.__store_result(block) != None:
+            block = self.connection.mapi.read_response()
         return True
 
     def setinputsizes(self, sizes):
@@ -368,8 +370,6 @@ class Cursor(object):
             scale = [None] * columns
             null_value = [None] * columns
             for col in xrange(columns):
-                # skip max strlen, not necessary
-                position += 8
                 # read (tablename, columnname, typename) as null-terminated strings
                 text = []
                 for i in xrange(position, len(header)):
@@ -390,16 +390,20 @@ class Cursor(object):
                 else:
                     null_value[col] = header[position:position + null_length]
                     position += null_length
+                # skip print width, not necessary
+                position += 8
 
             self.__query_id = 1 #FIXME, also transfer query id
-            self.rowcount = rows
+            self.rowcount = int(rows)
             self.__rows = []
             self.description = list(zip(column_name, type_, typelen,
                                         precision, scale, null_value))
             self.__offset = 0
             self.lastrowid = None
-            return
-        if block.startswith(mapi.MSG_NEW_RESULT_CHUNK): # +\n = new result set chunk
+            # consume the explicit flush we perform after the header
+            return True
+        # +\n = prot10 result set chunk, -\n = prot10 final result set chunk
+        if block.startswith(mapi.MSG_NEW_RESULT_CHUNK) or block.startswith(mapi.MSG_NEW_RESULT_FINAL_CHUNK):
             # chunk message, skip the +\n (first two characters)
             # and read the row count of this message
             if self.description == None:
@@ -446,6 +450,7 @@ class Cursor(object):
                             arr.append(hge_val if hge_val != hge_nil else None)
                         return arr
                     elif HAVE_NUMPY:
+                        # if we have NumPy we use that to read the binary data
                         numpy_type_ = None
                         if type_ == BinaryTypes.int8: 
                             numpy_type_ = numpy.int8
@@ -467,6 +472,7 @@ class Cursor(object):
                             arr = [None if x == null_value else x for x in arr]
                         return arr
                     else:
+                        # otherwise we use struct.unpack to read the binary data
                         bytes_per_value = 0
                         if type_ == BinaryTypes.int8:
                             type_fmt = "b"
@@ -511,7 +517,12 @@ class Cursor(object):
                             arr.append(None)
                         else:
                             # actual value, parse to byte array
-                            arr.append(bytearray(block[position:position + blob_length]))
+                            bytearray_ = bytearray(block[position:position + blob_length])
+                            # convert to string of bytes (this probably shouldn't happen)
+                            result_str = ""
+                            for x in bytearray_:
+                                result_str += hex(x)[2:] if x > 0xF else '0' + hex(x)[2:]
+                            arr.append(result_str.upper())
                             position += blob_length
                     if position != expected_end:
                         self.__exception_handler(InterfaceError, "Expected end position does not match up with actual end position")
@@ -523,7 +534,7 @@ class Cursor(object):
                 elif type_ == "int":
                     column_data.append(read_array_from_buffer(block, BinaryTypes.int32, rows_in_chunk, position, null_value))
                 elif type_ == "boolean":
-                    column_data.append(read_array_from_buffer(block, BinaryTypes.bool, rows_in_chunk, position, null_value))
+                    column_data.append([(False if x == 0 else True) if x != None else None for x in read_array_from_buffer(block, BinaryTypes.int8, rows_in_chunk, position, null_value)])
                 elif type_ == "double":
                     column_data.append(read_array_from_buffer(block, BinaryTypes.float64, rows_in_chunk, position, null_value))
                 elif type_ == "bigint":
@@ -613,8 +624,9 @@ class Cursor(object):
                 if typelen_ > 0:
                     position += rows_in_chunk * typelen_
 
-            self.__rows.extend(list(map(list, zip(*column_data))))
-            return
+            self.__rows.extend(list(map(tuple, zip(*column_data))))
+            # consume the explicit flush we perform after every chunk
+            return True
 
         for line in block.split("\n"):
             if line.startswith(mapi.MSG_INFO):
@@ -754,7 +766,8 @@ class Cursor(object):
         amount = end - self.__offset
         command = 'Xexport %s %s %s' % (self.__query_id, self.__offset, amount)
         block = self.connection.command(command)
-        self.__store_result(block)
+        while self.__store_result(block) != None:
+            block = self.connection.mapi.read_response()
 
     def __exception_handler(self, exception_class, message):
         """ raises the exception specified by exception, and add the error

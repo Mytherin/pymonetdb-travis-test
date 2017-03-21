@@ -53,6 +53,7 @@ MSG_QBLOCK = "&6"
 MSG_HEADER = "%"
 MSG_NEW_RESULT_HEADER = "*"
 MSG_NEW_RESULT_CHUNK = "+"
+MSG_NEW_RESULT_FINAL_CHUNK = "-"
 MSG_TUPLE = "["
 MSG_TUPLE_NOSLICE = "="
 MSG_REDIRECT = "^"
@@ -222,14 +223,7 @@ class Connection(object):
         self.state = STATE_INIT
         self.socket.close()
 
-    def cmd(self, operation):
-        """ put a mapi command on the line"""
-        logger.debug("executing command %s" % operation)
-
-        if self.state != STATE_READY:
-            raise(ProgrammingError, "Not connected")
-
-        self._putblock(operation)
+    def read_response(self):
         response = self._getblock()
         if not len(response):
             return ""
@@ -252,7 +246,7 @@ class Connection(object):
                 exception, string = handle_error(lines[index][1:])
                 raise exception(string)
 
-        if response[0] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK]:
+        if response[0] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK, MSG_NEW_RESULT_FINAL_CHUNK]:
             return response
         elif response[0] == MSG_ERROR:
             exception, string = handle_error(response[1:])
@@ -266,6 +260,17 @@ class Connection(object):
                 return response
         else:
             raise ProgrammingError("unknown state: %s" % response)
+
+
+    def cmd(self, operation):
+        """ put a mapi command on the line"""
+        logger.debug("executing command %s" % operation)
+
+        if self.state != STATE_READY:
+            raise(ProgrammingError, "Not connected")
+
+        self._putblock(operation)
+        return self.read_response()
 
     def _challenge_response(self, challenge, blocksize):
         """ generate a response to a mapi login challenge """

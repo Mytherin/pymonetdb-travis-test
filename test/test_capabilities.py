@@ -357,6 +357,14 @@ class DatabaseTest(unittest.TestCase):
             ('d', 'decimal', None, 9, 9, 4, None),
             ('n', 'varchar', None, 1, None, None, None),
         ]
+        if self.connection.mapi.protocol == pymonetdb.mapi.Protocol.prot10:
+            # the new protocol has a different description format that includes the NULL value
+            shouldbe = [
+                ('c', 'varchar', -1, 1024, 0, '\x80\x00'),
+                ('d', 'decimal', 4, 9, 4, '\x00\x00\x00\x80'),
+                ('n', 'varchar', -1, 1, 0, '\x80\x00')
+            ]
+
         try:
             self.cursor.execute("create table %s (c VARCHAR(1024), d DECIMAL(9,4), n VARCHAR(1) NOT NULL)" % self.table);
             self.cursor.execute("insert into %s VALUES ('test', 12345.1234, 'x')" % self.table)
