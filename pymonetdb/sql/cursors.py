@@ -11,13 +11,6 @@ from pymonetdb.exceptions import ProgrammingError, InterfaceError
 from pymonetdb import mapi
 from six import u, PY2
 
-try:
-    raise ImportError("Help")
-    import numpy
-    HAVE_NUMPY = True
-except ImportError:
-    HAVE_NUMPY = False
-
 from enum import Enum
 
 class BinaryTypes(Enum):
@@ -439,78 +432,34 @@ class Cursor(object):
                 null_value = self.null_values[c]
 
                 def read_array_from_buffer(buffer, type_, rows_in_chunk, position, null_value):
-                    # this function reads a column of values of the specified BinaryType 
-                    # from a buffer, and converts it to a Python list
-                    # we try to use NUMPY for this because it is faster
-                    # but we also support a non-NumPy mode that uses struct.unpack
-                    # for people that do not have NUMPY installed
-                    if type_ == BinaryTypes.int128:
-                        # hugeint is a 128-bit integer
-                        # we read hugeints by reading two 64-bit integers
-                        # and then multiplying the right-most integer by LONG_MAX (2^64)
-                        import math
-                        intermediate_arr = read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk * 2, position, None)
-                        arr = []
-                        LONG_MAX = math.pow(2, 64)
-                        hge_nil = None
-                        if null_value != None:
-                            nil_arr = read_array_from_buffer(null_value, BinaryTypes.int64, 2, 0, None)
-                            hge_nil = nil_arr[0] + nil_arr[1] * LONG_MAX
-                        for i in xrange(rows_in_chunk):
-                            hge_val = intermediate_arr[i * 2] + intermediate_arr[i * 2 + 1] * LONG_MAX
-                            arr.append(hge_val if hge_val != hge_nil else None)
-                        return arr
-                    elif HAVE_NUMPY:
-                        # if we have NumPy we use that to read the binary data
-                        numpy_type_ = None
-                        if type_ == BinaryTypes.int8: 
-                            numpy_type_ = numpy.int8
-                        elif type_ == BinaryTypes.int16:
-                            numpy_type_ = numpy.int16
-                        elif type_ == BinaryTypes.int32:
-                            numpy_type_ = numpy.int32
-                        elif type_ == BinaryTypes.int64:
-                            numpy_type_ = numpy.int64
-                        elif type_ == BinaryTypes.float32:
-                            numpy_type_ = numpy.float32
-                        elif type_ == BinaryTypes.float64:
-                            numpy_type_ = numpy.float64
-                        else:
-                            self.__exception_handler(InterfaceError, "Unexpected type, expected a BinaryTypes enum value")
-                        arr = numpy.frombuffer(buffer, type_, rows_in_chunk, position).tolist()
-                        if null_value != None:
-                            null_value = numpy.frombuffer(null_value, type_, 1, 0)
-                            arr = [None if x == null_value else x for x in arr]
-                        return arr
+                    # otherwise we use struct.unpack to read the binary data
+                    bytes_per_value = 0
+                    if type_ == BinaryTypes.int8:
+                        type_fmt = "b"
+                        bytes_per_value = 1
+                    elif type_ == BinaryTypes.int16:
+                        type_fmt = "h"
+                        bytes_per_value = 2
+                    elif type_ == BinaryTypes.int32:
+                        type_fmt = "i"
+                        bytes_per_value = 4
+                    elif type_ == BinaryTypes.int64:
+                        type_fmt = "q"
+                        bytes_per_value = 8
+                    elif type_ == BinaryTypes.float32:
+                        type_fmt = "f"
+                        bytes_per_value = 4
+                    elif type_ == BinaryTypes.float64:
+                        type_fmt = "d"
+                        bytes_per_value = 8
                     else:
-                        # otherwise we use struct.unpack to read the binary data
-                        bytes_per_value = 0
-                        if type_ == BinaryTypes.int8:
-                            type_fmt = "b"
-                            bytes_per_value = 1
-                        elif type_ == BinaryTypes.int16:
-                            type_fmt = "h"
-                            bytes_per_value = 2
-                        elif type_ == BinaryTypes.int32:
-                            type_fmt = "i"
-                            bytes_per_value = 4
-                        elif type_ == BinaryTypes.int64:
-                            type_fmt = "q"
-                            bytes_per_value = 8
-                        elif type_ == BinaryTypes.float32:
-                            type_fmt = "f"
-                            bytes_per_value = 4
-                        elif type_ == BinaryTypes.float64:
-                            type_fmt = "d"
-                            bytes_per_value = 8
-                        else:
-                            self.__exception_handler(InterfaceError, "Unexpected type, expected a BinaryTypes enum value")
-                        fmtstr = "<%d%s" % (rows_in_chunk, type_fmt)
-                        arr = struct.unpack(fmtstr, buffer[position:position + bytes_per_value * rows_in_chunk])
-                        if null_value != None:
-                            (null_value,) = struct.unpack("<%s" % type_fmt, null_value)
-                            arr = [None if x == null_value else x for x in arr]
-                        return arr
+                        self.__exception_handler(InterfaceError, "Unexpected type, expected a BinaryTypes enum value")
+                    fmtstr = "<%d%s" % (rows_in_chunk, type_fmt)
+                    arr = struct.unpack(fmtstr, buffer[position:position + bytes_per_value * rows_in_chunk])
+                    if null_value != None:
+                        (null_value,) = struct.unpack("<%s" % type_fmt, null_value)
+                        arr = [None if x == null_value else x for x in arr]
+                    return arr
 
                 if type_ == "blob":
                     # blobs start with the total length of the column as lng
