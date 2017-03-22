@@ -17,10 +17,14 @@ from six import BytesIO, PY3
 
 try:
     import snappy
+    # there is a different library called "snappy" that is NOT the compression library
+    # hence even on successful import we test if this "snappy" is the correct one
+    if "hello" != snappy.decompress(snappy.compress("hello")):
+        raise Exception("Snappy is not capable of compressing data!")
     HAVE_SNAPPY = True
 except ImportError:
     HAVE_SNAPPY = False
- 
+
 from pymonetdb.exceptions import OperationalError, DatabaseError,\
     ProgrammingError, NotSupportedError, IntegrityError
 
@@ -311,8 +315,7 @@ class Connection(object):
             # protocol 10 is supported
             protocol = Protocol.prot10
             _compression = "COMPRESSION_NONE"
-            # fixme: no compression on localhost
-            if "COMPRESSION_SNAPPY" in h and HAVE_SNAPPY:
+            if self.hostname != "localhost" and "COMPRESSION_SNAPPY" in h and HAVE_SNAPPY:
                 _compression = "COMPRESSION_SNAPPY"
                 compression = Compression.snappy
             response = ["LIT", self.username, pwhash, self.language, self.database, "PROT10", _compression, str(blocksize)]
@@ -340,7 +343,10 @@ class Connection(object):
                 length = unpacked >> 1
                 last = unpacked & 1
             if length > 0:
-                result.write(self._getbytes(length))
+                block = self._getbytes(length)
+                if self.compression == Compression.snappy:
+                    block = snappy.uncompress(block)
+                result.write(block)
         return decode(result.getvalue())
 
     def _getblock_socket(self):
@@ -378,6 +384,8 @@ class Connection(object):
         block = encode(block)
         while not last:
             data = block[pos:pos + MAX_PACKAGE_LENGTH]
+            if self.compression == Compression.snappy:
+                data = snappy.compress(data)
             length = len(data)
             if length < MAX_PACKAGE_LENGTH:
                 last = 1

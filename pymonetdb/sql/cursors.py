@@ -623,7 +623,7 @@ class Cursor(object):
                             self.__exception_handler(InterfaceError, "Expected more strings.")
                         position += total_length
                         if null_value != None:
-                            arr = [None if x == str(null_value)[0] else x for x in arr]
+                            arr = [None if x == str(null_value)[0] else x.decode('utf-8') for x in arr]
                         if type_ == "date":
                             # dates are transferred as strings because date math is not fun
                             # we convert them to Python date objects here because that is what Python people expected
