@@ -555,6 +555,14 @@ class Cursor(object):
                     divider = float(math.pow(10, scale_))
                     arr = [x / divider if x != None else x for x in intermediate_arr]
                     column_data.append(arr)
+                elif type_ == "date":
+                    # date are transferred as 8-byte unix timestamps
+                    import datetime
+                    if typelen_ != 8:
+                        raise Exception("Incorrect type length for type date.");
+                    intermediate_arr = read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk, position, null_value)
+                    arr = [datetime.datetime.utcfromtimestamp(x / 1000).date() if x != None else x for x in intermediate_arr]
+                    column_data.append(arr)
                 elif type_ == "time" or type_ == "timetz":
                     # time is transferred as 4-byte integers 
                     # which indicate the amount of milliseconds since 00:00
@@ -598,11 +606,6 @@ class Cursor(object):
                         position += total_length
                         if null_value != None:
                             arr = [None if x == null_value[0:1] else x.decode('utf-8') for x in arr]
-                        #if type_ == "date":
-                        #    # dates are transferred as strings because date math is not fun
-                        #    # we convert them to Python date objects here because that is what Python people expected
-                        #    import datetime
-                        #    arr = [datetime.datetime.strptime(x, "%Y-%m-%d").date() if x != None else x for x in arr]
                         column_data.append(arr)
                 else:
                     self.__exception_handler(InterfaceError, "Unsupported type %s." % type_)
