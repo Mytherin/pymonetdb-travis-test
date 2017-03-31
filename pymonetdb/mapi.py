@@ -56,8 +56,8 @@ MSG_QPREPARE = b"&5"
 MSG_QBLOCK = b"&6"
 MSG_HEADER = b"%"
 MSG_NEW_RESULT_HEADER = b"*"
-MSG_NEW_RESULT_CHUNK = b"+"
-MSG_NEW_RESULT_FINAL_CHUNK = b"-"
+MSG_INITIAL_RESULT_CHUNK = b"+"
+MSG_RESULT_CHUNK = b"-"
 MSG_TUPLE = b"["
 MSG_TUPLE_NOSLICE = b"="
 MSG_REDIRECT = b"^"
@@ -236,7 +236,7 @@ class Connection(object):
                 exception, string = handle_error(lines[index][1:])
                 raise exception(string)
 
-        if response[0:1] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK, MSG_NEW_RESULT_FINAL_CHUNK]:
+        if response[0:1] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_INITIAL_RESULT_CHUNK, MSG_RESULT_CHUNK]:
             return response
         elif response[0:1] == MSG_ERROR:
             exception, string = handle_error(response[1:])

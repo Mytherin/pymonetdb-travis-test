@@ -315,6 +315,7 @@ class Cursor(object):
 
         while self.__store_result(block) != None:
             block = self.connection.mapi.read_response()
+
         return True
 
     def setinputsizes(self, sizes):
@@ -361,7 +362,7 @@ class Cursor(object):
             header = block[2:]
             # unpack the header
             position = 0
-            (table_id, self.__query_id, rows, columns, self.timezone) = struct.unpack("<iqqqi", header[position:position + 32])
+            (self.__query_id, self.__actual_query_id, rows, columns, self.timezone) = struct.unpack("<iqqqi", header[position:position + 32])
             position += 32
 
             column_name = [None] * columns
@@ -412,7 +413,7 @@ class Cursor(object):
             # consume the explicit flush we perform after the header
             return True
         # +\n = prot10 result set chunk, -\n = prot10 final result set chunk
-        if block.startswith(mapi.MSG_NEW_RESULT_CHUNK) or block.startswith(mapi.MSG_NEW_RESULT_FINAL_CHUNK):
+        if block.startswith(mapi.MSG_INITIAL_RESULT_CHUNK) or block.startswith(mapi.MSG_RESULT_CHUNK):
             # chunk message, skip the +\n (first two characters)
             # and read the row count of this message
             if self.description == None:
@@ -438,7 +439,23 @@ class Cursor(object):
                 null_value = self.null_values[c]
 
                 def read_array_from_buffer(buffer, type_, rows_in_chunk, position, null_value):
-                    # otherwise we use struct.unpack to read the binary data
+                    if type_ == BinaryTypes.int128:
+                        # hugeint is a 128-bit integer
+                        # we read hugeints by reading two 64-bit integers
+                        # and then multiplying the right-most integer by LONG_MAX (2^64)
+                        import math
+                        intermediate_arr = read_array_from_buffer(block, BinaryTypes.int64, rows_in_chunk * 2, position, None)
+                        arr = []
+                        LONG_MAX = math.pow(2, 64)
+                        hge_nil = None
+                        if null_value != None:
+                            nil_arr = read_array_from_buffer(null_value, BinaryTypes.int64, 2, 0, None)
+                            hge_nil = nil_arr[0] + nil_arr[1] * LONG_MAX
+                        for i in xrange(rows_in_chunk):
+                            hge_val = intermediate_arr[i * 2] + intermediate_arr[i * 2 + 1] * LONG_MAX
+                            arr.append(hge_val if hge_val != hge_nil else None)
+                        return arr
+                    # we use struct.unpack to read standard binary numeric data
                     bytes_per_value = 0
                     if type_ == BinaryTypes.int8:
                         type_fmt = "b"
@@ -484,7 +501,9 @@ class Cursor(object):
                         else:
                             # actual value, parse to byte array
                             bytearray_ = bytearray(block[position:position + blob_length])
-                            # convert to string of bytes (this probably shouldn't happen)
+                            # convert bytearray to string of bytes
+                            # (this probably shouldn't happen, keeping it as a bytearray
+                            #  makes more sense, but this is what the testcases do)
                             result_str = ""
                             for x in bytearray_:
                                 result_str += hex(x)[2:] if x > 0xF else '0' + hex(x)[2:]
@@ -579,18 +598,21 @@ class Cursor(object):
                         position += total_length
                         if null_value != None:
                             arr = [None if x == null_value[0:1] else x.decode('utf-8') for x in arr]
-                        if type_ == "date":
-                            # dates are transferred as strings because date math is not fun
-                            # we convert them to Python date objects here because that is what Python people expected
-                            import datetime
-                            arr = [datetime.datetime.strptime(x, "%Y-%m-%d").date() if x != None else x for x in arr]
+                        #if type_ == "date":
+                        #    # dates are transferred as strings because date math is not fun
+                        #    # we convert them to Python date objects here because that is what Python people expected
+                        #    import datetime
+                        #    arr = [datetime.datetime.strptime(x, "%Y-%m-%d").date() if x != None else x for x in arr]
                         column_data.append(arr)
                 else:
                     self.__exception_handler(InterfaceError, "Unsupported type %s." % type_)
                 if typelen_ > 0:
                     position += rows_in_chunk * typelen_
 
+            if block.startswith(mapi.MSG_INITIAL_RESULT_CHUNK):
+                self.__rows = []
             self.__rows.extend(list(map(tuple, zip(*column_data))))
+
             # consume the explicit flush we perform after every chunk
             return True
 

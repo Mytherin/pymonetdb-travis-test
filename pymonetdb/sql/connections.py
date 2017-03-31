@@ -53,7 +53,7 @@ class Connection(object):
                           unix_socket=unix_socket)
         self.set_autocommit(autocommit)
         self.set_sizeheader(True)
-        self.set_replysize(100000)
+        self.set_replysize(1000000)
 
     def close(self):
         """ Close the connection.
