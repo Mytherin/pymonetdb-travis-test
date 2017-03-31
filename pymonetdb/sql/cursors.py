@@ -361,9 +361,8 @@ class Cursor(object):
             header = block[2:]
             # unpack the header
             position = 0
-            (table_id, rows, columns, self.timezone) = struct.unpack("<iqqi", header[position:position + 24])
-            position += 24
-
+            (table_id, self.__query_id, rows, columns, self.timezone) = struct.unpack("<iqqqi", header[position:position + 32])
+            position += 32
 
             column_name = [None] * columns
             type_ = [None] * columns
@@ -400,7 +399,6 @@ class Cursor(object):
                 # skip print width, not necessary
                 position += 8
 
-            self.__query_id = 1 #FIXME, also transfer query id
             self.rowcount = int(rows)
             self.__rows = []
 
