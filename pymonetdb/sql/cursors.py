@@ -11,6 +11,12 @@ from pymonetdb.exceptions import ProgrammingError, InterfaceError
 from pymonetdb import mapi
 from six import u, PY2
 
+if PY2:
+    null_terminator = '\0'
+else:
+    null_terminator = 0
+    xrange = range
+
 from enum import Enum
 
 class BinaryTypes(Enum):
@@ -343,7 +349,7 @@ class Cursor(object):
         """ parses the mapi result into a resultset"""
 
         if not block:
-            block = ""
+            block = b""
 
         column_name = ""
         scale = display_size = internal_size = precision = 0
@@ -372,13 +378,15 @@ class Cursor(object):
                 # read (tablename, columnname, typename) as null-terminated strings
                 text = []
                 for i in xrange(position, len(header)):
-                    if header[i] == '\0':
+                    if header[i] == null_terminator:
                         text.append(header[position:i])
                         position = i + 1
                         if len(text) == 3:
                             break
-                column_name[col] = text[1]
-                type_[col] = text[2]
+                if len(text) != 3:
+                    raise Exception("Expected three names (tablename, columnname, typename) for this column")
+                column_name[col] = text[1].decode('utf-8')
+                type_[col] = text[2].decode('utf-8')
                 (internal_size[col], precision[col], scale[col], null_length) = struct.unpack("<iiii", header[position:position + 16])
                 position += 16
                 # read the null-value
@@ -424,7 +432,7 @@ class Cursor(object):
                 # the column data start position is always 8-byte aligned (for solaris)
                 # so we align 'position' to the next-highest multiple of 8
                 # (or leave it unchanged if it is already a multiple of 8)
-                position = position if position % 8 == 0 else position / 8 * 8 + 8
+                position = position if position % 8 == 0 else position // 8 * 8 + 8
                 type_ = column[1]
                 typelen_ = column[3]
                 precision_ = float(column[4])
@@ -567,12 +575,12 @@ class Cursor(object):
                         (total_length,) = struct.unpack("<q", block[position:position + 8])
                         position += 8
                         # get the strings, and split them by null terminator
-                        arr = block[position:position + total_length].split('\x00')[:-1]
+                        arr = block[position:position + total_length].split(b'\x00')[:-1]
                         if len(arr) != rows_in_chunk:
                             self.__exception_handler(InterfaceError, "Expected more strings.")
                         position += total_length
                         if null_value != None:
-                            arr = [None if x == str(null_value)[0] else x.decode('utf-8') for x in arr]
+                            arr = [None if x == null_value[0:1] else x.decode('utf-8') for x in arr]
                         if type_ == "date":
                             # dates are transferred as strings because date math is not fun
                             # we convert them to Python date objects here because that is what Python people expected
@@ -588,7 +596,7 @@ class Cursor(object):
             # consume the explicit flush we perform after every chunk
             return True
 
-        for line in block.split("\n"):
+        for line in block.split(b"\n"):
             if line.startswith(mapi.MSG_INFO):
                 logger.info(line[1:])
                 self.messages.append((Warning, line[1:]))

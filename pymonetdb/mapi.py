@@ -19,10 +19,10 @@ try:
     import snappy
     # there is a different library called "snappy" that is NOT the compression library
     # hence even on successful import we test if this "snappy" is the correct one
-    if "hello" != snappy.decompress(snappy.compress("hello")):
+    if "foo" != snappy.decompress(snappy.compress("foo")):
         raise Exception("Snappy is not capable of compressing data!")
     HAVE_SNAPPY = True
-except ImportError:
+except:
     HAVE_SNAPPY = False
 
 from pymonetdb.exceptions import OperationalError, DatabaseError,\
@@ -43,25 +43,25 @@ logger = logging.getLogger(__name__)
 
 MAX_PACKAGE_LENGTH = (1024 * 8) - 2
 
-MSG_PROMPT = ""
-MSG_MORE = "\1\2\n"
-MSG_INFO = "#"
-MSG_ERROR = "!"
-MSG_Q = "&"
-MSG_QTABLE = "&1"
-MSG_QUPDATE = "&2"
-MSG_QSCHEMA = "&3"
-MSG_QTRANS = "&4"
-MSG_QPREPARE = "&5"
-MSG_QBLOCK = "&6"
-MSG_HEADER = "%"
-MSG_NEW_RESULT_HEADER = "*"
-MSG_NEW_RESULT_CHUNK = "+"
-MSG_NEW_RESULT_FINAL_CHUNK = "-"
-MSG_TUPLE = "["
-MSG_TUPLE_NOSLICE = "="
-MSG_REDIRECT = "^"
-MSG_OK = "=OK"
+MSG_PROMPT = b""
+MSG_MORE = b"\1\2\n"
+MSG_INFO = b"#"
+MSG_ERROR = b"!"
+MSG_Q = b"&"
+MSG_QTABLE = b"&1"
+MSG_QUPDATE = b"&2"
+MSG_QSCHEMA = b"&3"
+MSG_QTRANS = b"&4"
+MSG_QPREPARE = b"&5"
+MSG_QBLOCK = b"&6"
+MSG_HEADER = b"%"
+MSG_NEW_RESULT_HEADER = b"*"
+MSG_NEW_RESULT_CHUNK = b"+"
+MSG_NEW_RESULT_FINAL_CHUNK = b"-"
+MSG_TUPLE = b"["
+MSG_TUPLE_NOSLICE = b"="
+MSG_REDIRECT = b"^"
+MSG_OK = b"=OK"
 
 STATE_INIT = 0
 STATE_READY = 1
@@ -92,20 +92,6 @@ def handle_error(error):
         return errors[error[:6]], error[6:]
     else:
         return OperationalError, error
-
-
-def encode(s):
-    """only encode string for python3"""
-    if PY3:
-        return s.encode()
-    return s
-
-
-def decode(b):
-    """only decode byte for python3"""
-    if PY3:
-        return b.decode()
-    return b
 
 
 # noinspection PyExceptionInherit
@@ -173,10 +159,10 @@ class Connection(object):
         """ Reads challenge from line, generate response and check if
         everything is okay """
 
-        challenge = self._getblock()
+        challenge = self._getblock().decode('utf-8')
         self.blocksize = 1000000
         (response, protocol, compression) = self._challenge_response(challenge, self.blocksize)
-        self._putblock(response)
+        self._putblock(response.encode('utf-8'))
         self.protocol = protocol
         self.compression = compression
         prompt = self._getblock().strip()
@@ -231,7 +217,7 @@ class Connection(object):
         response = self._getblock()
         if not len(response):
             return ""
-        elif response.startswith(MSG_OK):
+        if response.startswith(MSG_OK):
             return response[3:].strip() or ""
         if response == MSG_MORE:
             # tell server it isn't going to get more
@@ -244,18 +230,18 @@ class Connection(object):
         # starts with MSG_ERROR. If this is the case, find which line records
         # the error and use it to call handle_error.
         if response[:2] == MSG_QUPDATE:
-            lines = response.split('\n')
+            lines = response.split(b'\n')
             if any([l.startswith(MSG_ERROR) for l in lines]):
                 index = next(i for i, v in enumerate(lines) if v.startswith(MSG_ERROR))
                 exception, string = handle_error(lines[index][1:])
                 raise exception(string)
 
-        if response[0] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK, MSG_NEW_RESULT_FINAL_CHUNK]:
+        if response[0:1] in [MSG_Q, MSG_HEADER, MSG_TUPLE, MSG_NEW_RESULT_HEADER, MSG_NEW_RESULT_CHUNK, MSG_NEW_RESULT_FINAL_CHUNK]:
             return response
-        elif response[0] == MSG_ERROR:
+        elif response[0:1] == MSG_ERROR:
             exception, string = handle_error(response[1:])
             raise exception(string)
-        elif response[0] == MSG_INFO:
+        elif response[0:1] == MSG_INFO:
             logger.info("%s" % (response[1:]))
         elif self.language == 'control' and not self.hostname:
             if response.startswith("OK"):
@@ -273,7 +259,7 @@ class Connection(object):
         if self.state != STATE_READY:
             raise(ProgrammingError, "Not connected")
 
-        self._putblock(operation)
+        self._putblock(operation.encode('utf-8') if PY3 else operation)
         return self.read_response()
 
     def _challenge_response(self, challenge, blocksize):
@@ -286,7 +272,7 @@ class Connection(object):
             algo = challenges[5]
             try:
                 h = hashlib.new(algo)
-                h.update(encode(password))
+                h.update(password.encode())
                 password = h.hexdigest()
             except ValueError as e:
                 raise NotSupportedError(e.message)
@@ -347,7 +333,7 @@ class Connection(object):
                 if self.compression == Compression.snappy:
                     block = snappy.uncompress(block)
                 result.write(block)
-        return decode(result.getvalue())
+        return result.getvalue()
 
     def _getblock_socket(self):
         buffer = BytesIO()
@@ -381,7 +367,6 @@ class Connection(object):
     def _putblock_inet(self, block):
         pos = 0
         last = 0
-        block = encode(block)
         while not last:
             data = block[pos:pos + MAX_PACKAGE_LENGTH]
             if self.compression == Compression.snappy:
