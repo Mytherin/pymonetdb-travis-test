@@ -11,15 +11,7 @@ cd MonetDB-default
 make -j
 sudo make install
 
-echo $LD_LIBRARY_PATH
-echo $CPATH
-echo $CFLAGS
-echo $CPPFLAGS
-echo $LDFLAGS
-
-export $LD_LIBRARY_PATH=$(dirname $(which monetdb))/../lib
-
-echo $LD_LIBRARY_PATH
+export $LD_LIBRARY_PATH=/usr/local/lib
 
 # sudo apt-get install software-properties-common
 # sudo apt-get update -q
