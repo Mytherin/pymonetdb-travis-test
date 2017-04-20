@@ -20,6 +20,8 @@ script:
 after_success:
  - coveralls
 
+sudo: required
+
 deploy:
   provider: pypi
   user: gijzelaerr
