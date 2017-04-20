@@ -1,7 +1,7 @@
 #!/bin/bash -ve
 
 # install monetdb
-sudo apt-get install software-properties-common libpcre3-dev libxml2-dev autoconf pkgconf libssl-dev
+sudo apt-get install software-properties-common libpcre3-dev libxml2-dev autoconf libssl-dev
 
 wget https://dev.monetdb.org/hg/MonetDB/archive/default.tar.gz
 tar xvf default.tar.gz
