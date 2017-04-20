@@ -606,6 +606,9 @@ class Cursor(object):
                         position += total_length
                         if null_value != None:
                             arr = [None if x == null_value[0:1] else x.decode('utf-8') for x in arr]
+                        else:
+                            arr = [x.decode('utf-8') for x in arr]
+
                         column_data.append(arr)
                 else:
                     self.__exception_handler(InterfaceError, "Unsupported type %s." % type_)
