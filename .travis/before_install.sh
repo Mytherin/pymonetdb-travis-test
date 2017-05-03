@@ -7,11 +7,11 @@ wget https://dev.monetdb.org/hg/MonetDB/archive/default.tar.gz
 tar xvf default.tar.gz
 cd MonetDB-default
 ./bootstrap
-./configure --enable-debug --enable-assert --disable-optimize
+./configure --enable-debug --enable-assert --disable-optimize --prefix=$HOME/monetdb-install
 make -j
-sudo make install
+make install
 
-export LD_LIBRARY_PATH=/usr/local/lib
+export PATH=$HOME/monetdb-install/bin:$PATH
 
 # sudo apt-get install software-properties-common
 # sudo apt-get update -q
@@ -25,10 +25,10 @@ export LD_LIBRARY_PATH=/usr/local/lib
 # sudo service monetdb5-sql start
 
 # set up test database
-sudo monetdb create demo
-sudo monetdb release demo
-sudo monetdbd set control=yes /var/lib/monetdb
-sudo monetdbd set passphrase=testdb /var/lib/monetdb
+monetdb create demo
+monetdb release demo
+monetdbd set control=yes $HOME/monetdb-install/var/lib/monetdb
+monetdbd set passphrase=testdb $HOME/monetdb-install/var/lib/monetdb
 
 # install python test requirements
 pip install -r test/requirements.txt
