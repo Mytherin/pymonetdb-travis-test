@@ -385,7 +385,7 @@ class Connection(object):
             if self.protocol == Protocol.prot9:
                 flag = struct.pack('<H', (length << 1) + last)
             else:
-                flag = struct.pack('<q', (length << 1) + last)
+                flag = struct.pack('<q', (length << 1) + last) # little endian
             self.socket.send(flag)
             self.socket.send(data)
             pos += length

@@ -361,7 +361,7 @@ class Cursor(object):
             header = block[2:]
             # unpack the header
             position = 0
-            (self.__query_id, self.__actual_query_id, rows, columns, self.timezone) = struct.unpack("<iqqqi", header[position:position + 32])
+            (self.__query_id, self.__actual_query_id, rows, columns, self.timezone) = struct.unpack("=iqqqi", header[position:position + 32])
             position += 32
 
             column_name = [None] * columns
@@ -386,7 +386,7 @@ class Cursor(object):
                     raise Exception("Expected three names (tablename, columnname, typename) for this column")
                 column_name[col] = text[1].decode('utf-8')
                 type_[col] = text[2].decode('utf-8')
-                (internal_size[col], precision[col], scale[col], null_length) = struct.unpack("<iiii", header[position:position + 16])
+                (internal_size[col], precision[col], scale[col], null_length) = struct.unpack("=iiii", header[position:position + 16])
                 position += 16
                 # read the null-value
                 # if null_length == 0 then the column has no NULL values
@@ -417,7 +417,7 @@ class Cursor(object):
             # and read the row count of this message
             if self.description == None:
                 self.__exception_handler(InterfaceError, "Unexpected result set chunk.")
-            (rows_in_chunk,) = struct.unpack("<q", block[2:10])
+            (rows_in_chunk,) = struct.unpack("=q", block[2:10])
             if rows_in_chunk < 0:
                 # if the row count is negative this is a buffer extension message
                 # we don't use a fixed size buffer so we can ignore it
@@ -479,20 +479,20 @@ class Cursor(object):
                     fmtstr = "<%d%s" % (rows_in_chunk, type_fmt)
                     arr = struct.unpack(fmtstr, buffer[position:position + bytes_per_value * rows_in_chunk])
                     if null_value != None:
-                        (null_value,) = struct.unpack("<%s" % type_fmt, null_value)
+                        (null_value,) = struct.unpack("=%s" % type_fmt, null_value)
                         arr = [None if x == null_value else x for x in arr]
                     return arr
 
                 if type_ == "blob":
                     # blobs start with the total length of the column as lng
-                    (total_length,) = struct.unpack("<q", block[position:position + 8])
+                    (total_length,) = struct.unpack("=q", block[position:position + 8])
                     position += 8
                     expected_end = position + total_length
                     arr = []
                     for i in xrange(rows_in_chunk):
                         # each blob starts with a lng indicating the length of the blob
                         # followed by the actual data
-                        (blob_length,) = struct.unpack("<q", block[position:position + 8])
+                        (blob_length,) = struct.unpack("=q", block[position:position + 8])
                         position += 8
                         if blob_length < 0:
                             # blob length < 0 means NULL value
@@ -596,7 +596,7 @@ class Cursor(object):
                     else:
                         # null terminated strings
                         # this column starts with a lng that indicates the length of the column
-                        (total_length,) = struct.unpack("<q", block[position:position + 8])
+                        (total_length,) = struct.unpack("=q", block[position:position + 8])
                         position += 8
                         # get the strings, and split them by null terminator
                         arr = block[position:position + total_length].split(b'\x00')[:-1]
