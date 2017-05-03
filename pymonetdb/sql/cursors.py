@@ -17,9 +17,8 @@ else:
     null_terminator = 0
     xrange = range
 
-from enum import Enum
 
-class BinaryTypes(Enum):
+class BinaryTypes:
     int8 = 1
     int16 = 2
     int32 = 3

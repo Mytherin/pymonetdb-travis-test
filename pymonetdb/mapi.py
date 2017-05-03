@@ -28,13 +28,11 @@ except:
 from pymonetdb.exceptions import OperationalError, DatabaseError,\
     ProgrammingError, NotSupportedError, IntegrityError
 
-from enum import Enum
-
-class Protocol(Enum):
+class Protocol:
     prot9 = 1
     prot10 = 2
 
-class Compression(Enum):
+class Compression:
     none = 1
     snappy = 2
     lz4 = 3
