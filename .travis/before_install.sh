@@ -3,9 +3,11 @@
 # install monetdb
 sudo apt-get install -qy software-properties-common libpcre3-dev libxml2-dev autoconf libssl-dev gettext bison
 
-wget https://dev.monetdb.org/hg/MonetDB/archive/default.tar.gz
-tar xvf default.tar.gz
-cd MonetDB-default
+export MONETDB_BRANCH=Jul2017
+
+wget https://dev.monetdb.org/hg/MonetDB/archive/$MONETDB_BRANCH.tar.gz
+tar xvf $MONETDB_BRANCH.tar.gz
+cd MonetDB-$MONETDB_BRANCH
 ./bootstrap
 ./configure --enable-debug --enable-assert --disable-optimize --prefix=$HOME/monetdb-install
 make -j
