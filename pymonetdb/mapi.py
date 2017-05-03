@@ -13,6 +13,7 @@ import logging
 import struct
 import hashlib
 import os
+import sys
 from six import BytesIO, PY3
 
 try:
@@ -36,6 +37,14 @@ class Compression:
     none = 1
     snappy = 2
     lz4 = 3
+
+class Endianness:
+    little = 1
+    big = 2
+
+def get_byte_order():
+    import sys
+    return Endianness.little if sys.byteorder == 'little' else Endianness.big
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +118,7 @@ class Connection(object):
         self.language = ""
         self.protocol = Protocol.prot9
         self.compression = Compression.none
+        self.endianness = get_byte_order()
         self.blocksize = -1
 
     def connect(self, database, username, password, language, hostname=None,
@@ -302,7 +312,7 @@ class Connection(object):
             if self.hostname != "localhost" and "COMPRESSION_SNAPPY" in h and HAVE_SNAPPY:
                 _compression = "COMPRESSION_SNAPPY"
                 compression = Compression.snappy
-            response = ["LIT", self.username, pwhash, self.language, self.database, "PROT10", _compression, str(blocksize)]
+            response = ["LIT" if  self.endianness == Endianness.little else "BIG", self.username, pwhash, self.language, self.database, "PROT10", _compression, str(blocksize)]
         return (":".join(response) + ":", protocol, compression)
 
     def _getblock(self):
