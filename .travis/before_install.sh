@@ -10,6 +10,7 @@ cd MonetDB-default
 ./configure --enable-debug --enable-assert --disable-optimize --prefix=$HOME/monetdb-install
 make -j
 make install
+cd ..
 
 export PATH=$HOME/monetdb-install/bin:$PATH
 
