@@ -25,10 +25,12 @@ export PATH=$HOME/monetdb-install/bin:$PATH
 # sudo service monetdb5-sql start
 
 # set up test database
+monetdbd create $HOME/dbfarm
+monetdbd set control=yes $HOME/dbfarm
+monetdbd set passphrase=testdb $HOME/dbfarm
+monetdbd start $HOME/dbfarm
 monetdb create demo
 monetdb release demo
-monetdbd set control=yes $HOME/monetdb-install/var/lib/monetdb
-monetdbd set passphrase=testdb $HOME/monetdb-install/var/lib/monetdb
 
 # install python test requirements
 pip install -r test/requirements.txt
